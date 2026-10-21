@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CataCheck - Escáner de Códigos</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- LIBRERÍA UNIVERSAL BARCODE & QR (EAN-13, EAN-8, CODE-128, CODE-39, QR) [1] -->
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+</head>
+<body class="bg-slate-900 text-white min-h-screen flex flex-col justify-between p-4 font-sans">
+
+  <div class="space-y-3">
+    <!-- Encabezado Pop-up -->
+    <div class="flex items-center justify-between border-b border-slate-800 pb-2">
+      <div class="flex items-center space-x-2">
+        <span class="text-xl">📷</span>
+        <h1 class="font-black text-sm uppercase tracking-wide text-blue-400">Escáner Universal CataCheck</h1>
+      </div>
+      <button onclick="window.close()" class="text-slate-400 hover:text-white font-bold text-sm bg-slate-800 px-2.5 py-1 rounded-lg">
+        Cerrar ✕
+      </button>
+    </div>
+
+    <!-- Selector de Cámaras si existen múltiples -->
+    <div id="contenedor-selector" class="hidden">
+      <label class="block text-[11px] font-bold text-slate-400 mb-1">Seleccionar Cámara:</label>
+      <select id="select-camaras" onchange="cambiarCamara()" class="w-full bg-slate-800 border border-slate-700 text-xs rounded-xl p-2 font-semibold text-white focus:outline-none">
+      </select>
+    </div>
+
+    <!-- Visor de la Cámara en Vivo -->
+    <div class="relative bg-black rounded-2xl overflow-hidden aspect-square border border-slate-800 flex items-center justify-center">
+      <div id="reader" class="w-full h-full"></div>
+      <div class="absolute inset-x-8 top-1/2 border-t-2 border-amber-500 animate-pulse pointer-events-none"></div>
+    </div>
+
+    <!-- Estado y Mensajes -->
+    <div id="estado-mensaje" class="text-center p-2 rounded-xl bg-slate-800 border border-slate-700 text-xs text-slate-300">
+      Iniciando cámara nativa sin restricciones de iframe...
+    </div>
+
+    <!-- Alternativa por Foto si la cámara tiene fallas de hardware -->
+    <div class="text-center pt-1">
+      <label class="inline-block bg-blue-600 hover:bg-blue-500 text-white font-bold px-4 py-2 rounded-xl text-xs cursor-pointer shadow-md">
+        <span>📸 Tomar Foto del Código</span>
+        <input type="file" accept="image/*" capture="environment" class="hidden" onchange="escanearFoto(event)" />
+      </label>
+    </div>
+  </div>
+
+  <footer class="text-center text-[10px] text-slate-500 border-t border-slate-800 pt-2">
+    Al detectar el código, se enviará automáticamente a la ventana principal.
+  </footer>
+
+  <script>
+    let html5QrCode = null;
+    const urlParams = new URLSearchParams(window.location.search);
+    const destinoParam = urlParams.get('destino') || 'GLOBAL';
+
+    function notificarYSalir(codigo) {
+      document.getElementById('estado-mensaje').innerHTML = '<span class="text-emerald-400 font-bold">✅ Código leído: ' + codigo + '</span>';
+      
+      // COMUNICACIÓN SÍNCRONA CON LA VENTANA PRINCIPAL DE CATACHECK
+      if (window.opener && !window.opener.closed) {
+        window.opener.postMessage({
+          tipo: 'CODIGO_ESCANEADO',
+          codigo: codigo,
+          destino: destinoParam
+        }, '*');
+      }
+
+      setTimeout(() => {
+        window.close();
+      }, 400);
+    }
+
+    function iniciarEscaner() {
+      html5QrCode = new Html5Qrcode("reader");
+
+      Html5Qrcode.getCameras().then(devices => {
+        if (devices && devices.length) {
+          const select = document.getElementById('select-camaras');
+          select.innerHTML = '';
+          devices.forEach((cam, i) => {
+            const opt = document.createElement('option');
+            opt.value = cam.id;
+            opt.text = cam.label || ('Cámara ' + (i + 1));
+            select.appendChild(opt);
+          });
+
+          if (devices.length > 1) {
+            document.getElementById('contenedor-selector').classList.remove('hidden');
+          }
+
+          let trasera = devices.find(d => d.label.toLowerCase().includes('back') || d.label.toLowerCase().includes('trasera'));
+          let cameraId = trasera ? trasera.id : devices[0].id;
+          select.value = cameraId;
+
+          arrancarCamaraConId(cameraId);
+        } else {
+          arrancarConConstraint({ facingMode: "environment" });
+        }
+      }).catch(err => {
+        arrancarConConstraint({ facingMode: "user" });
+      });
+    }
+
+    function arrancarCamaraConId(cameraId) {
+      const config = { fps: 15, qrbox: { width: 250, height: 180 } };
+      html5QrCode.start(
+        cameraId,
+        config,
+        (decodedText) => {
+          html5QrCode.stop().then(() => {
+            notificarYSalir(decodedText);
+          }).catch(() => {
+            notificarYSalir(decodedText);
+          });
+        },
+        () => {}
+      ).then(() => {
+        document.getElementById('estado-mensaje').innerText = 'Apunta el código de barras o QR dentro del recuadro.';
+      }).catch(err => {
+        document.getElementById('estado-mensaje').innerHTML = '<span class="text-rose-400">Error al iniciar video: ' + err + '</span>';
+      });
+    }
+
+    function arrancarConConstraint(constraint) {
+      const config = { fps: 12, qrbox: { width: 250, height: 180 } };
+      html5QrCode.start(
+        constraint,
+        config,
+        (decodedText) => {
+          html5QrCode.stop().then(() => { notificarYSalir(decodedText); });
+        },
+        () => {}
+      ).then(() => {
+        document.getElementById('estado-mensaje').innerText = 'Apunta el código de barras o QR.';
+      }).catch(err => {
+        document.getElementById('estado-mensaje').innerHTML = '<span class="text-rose-400">Permiso denegado. Usa el botón "Tomar Foto".</span>';
+      });
+    }
+
+    function cambiarCamara() {
+      const select = document.getElementById('select-camaras');
+      if (html5QrCode && select.value) {
+        html5QrCode.stop().then(() => {
+          arrancarCamaraConId(select.value);
+        }).catch(() => {});
+      }
+    }
+
+    function escanearFoto(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+      document.getElementById('estado-mensaje').innerText = 'Procesando imagen capturada...';
+
+      const qrScanner = new Html5Qrcode("reader");
+      qrScanner.scanFile(file, true)
+        .then(decodedText => {
+          notificarYSalir(decodedText);
+        })
+        .catch(err => {
+          document.getElementById('estado-mensaje').innerHTML = '<span class="text-rose-400">No se detectó el código en la foto. Intenta enfocarlo mejor.</span>';
+        });
+    }
+
+    window.addEventListener('load', iniciarEscaner);
+  </script>
+</body>
+</html>
